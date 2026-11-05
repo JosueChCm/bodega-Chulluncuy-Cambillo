@@ -1,32 +1,19 @@
 <?php
 // src/ServicioVenta.php · Lógica de negocio de la bodega «Doña Rosa».
 // Sin HTML, sin SQL, sin acceso a base de datos: solo funciones puras (testeables con PHPUnit).
+// Los montos se calculan internamente en céntimos (enteros) para evitar errores de coma flotante.
 
 declare(strict_types=1);
 
 final class ServicioVenta
 {
-    /** Umbral a partir del cual (estrictamente mayor) se aplica descuento — R2. */
+    /** R2 · El descuento se aplica solo si el subtotal es ESTRICTAMENTE mayor a este monto. */
     public const UMBRAL_DESCUENTO = 100.00;
 
-    /** Porcentaje de descuento — R2. */
+    /** R2 · Porcentaje de descuento. */
     public const TASA_DESCUENTO = 0.05;
 
-    /**
-     * R3 · Convierte el valor recibido del formulario en un entero, o null si no es
-     * un entero escrito como tal ("2.5", "abc", "", "1e3" → null).
-     */
-    public static function parsearCantidad(mixed $valor): ?int
-    {
-        if (is_int($valor)) {
-            return $valor;
-        }
-        if (is_string($valor) && preg_match('/^\s*[+-]?\d+\s*$/', $valor) === 1) {
-            $entero = filter_var(trim($valor), FILTER_VALIDATE_INT);
-            return $entero === false ? null : $entero;
-        }
-        return null; // decimales, floats, arreglos, null, texto
-    }
+    // ─── R3 · Cantidad ──────────────────────────────────────────
 
     /** R3 · La cantidad debe ser un entero mayor que cero. */
     public static function validarCantidad(int $cantidad): bool
@@ -35,14 +22,16 @@ final class ServicioVenta
     }
 
     /**
-     * R3 · Combina parsearCantidad() y validarCantidad(): devuelve la cantidad si es
-     * un entero > 0, o null si debe rechazarse (0, negativos, decimales, texto).
+     * R3 · Devuelve la cantidad si el valor del formulario es un entero > 0,
+     * o null si debe rechazarse (0, negativos, decimales, texto, vacío).
      */
-    public static function cantidadValida(mixed $valor): ?int
+    public static function obtenerCantidadValida(mixed $valor): ?int
     {
-        $cantidad = self::parsearCantidad($valor);
+        $cantidad = self::convertirAEntero($valor);
         return ($cantidad !== null && self::validarCantidad($cantidad)) ? $cantidad : null;
     }
+
+    // ─── R1 · Stock ─────────────────────────────────────────────
 
     /** R1 · No se puede vender más que el stock; igualarlo es válido (el stock queda en 0). */
     public static function hayStock(int $cantidad, int $stock): bool
@@ -59,58 +48,71 @@ final class ServicioVenta
      */
     public static function agruparPorProducto(array $lineas): array
     {
-        $agrupado = [];
+        $itemsPorProducto = [];
         foreach ($lineas as $linea) {
-            $p = $linea['producto'];
-            $agrupado[$p['id']] ??= [
-                'producto_id' => $p['id'],
-                'nombre'      => $p['nombre'],
-                'precio'      => $p['precio'],
-                'stock'       => $p['stock'],
+            $producto = $linea['producto'];
+            $itemsPorProducto[$producto['id']] ??= [
+                'producto_id' => $producto['id'],
+                'nombre'      => $producto['nombre'],
+                'precio'      => $producto['precio'],
+                'stock'       => $producto['stock'],
                 'cantidad'    => 0,
             ];
-            $agrupado[$p['id']]['cantidad'] += $linea['cantidad'];
+            $itemsPorProducto[$producto['id']]['cantidad'] += $linea['cantidad'];
         }
-        return array_values($agrupado);
+        return array_values($itemsPorProducto);
     }
 
     /**
      * R1 · Devuelve los ítems cuya cantidad excede el stock (lista vacía = todo en regla).
      * @param array<int, array{cantidad:int, stock:int}> $items
      */
-    public static function itemsSinStock(array $items): array
+    public static function itemsQueExcedenStock(array $items): array
     {
         return array_values(array_filter(
             $items,
-            static fn(array $it): bool => !self::hayStock($it['cantidad'], $it['stock'])
+            static fn(array $item): bool => !self::hayStock($item['cantidad'], $item['stock'])
         ));
     }
 
     /** Criterio 2.7 · Una venta debe tener al menos una línea válida. */
-    public static function ventaTieneLineas(array $items): bool
+    public static function tieneLineas(array $items): bool
     {
         return $items !== [];
     }
 
-    /** Importe de una línea = precio × cantidad, con 2 decimales (base del subtotal). */
+    // ─── Montos: importe, subtotal y R2 · descuento/total ───────
+
+    /** Importe de una línea = precio × cantidad, con 2 decimales. */
     public static function calcularImporte(float|int|string $precio, int $cantidad): float
     {
-        return self::calcularSubtotal([['precio' => $precio, 'cantidad' => $cantidad]]);
+        return self::aSoles(self::importeEnCentimos($precio, $cantidad));
     }
 
     /**
-     * Subtotal = Σ(precio × cantidad), en soles con 2 decimales.
+     * Subtotal = Σ(precio × cantidad), con 2 decimales.
      * @param array<int, array{precio: float|int|string, cantidad: int}> $items
      */
     public static function calcularSubtotal(array $items): float
     {
-        $centimos = 0;
+        $subtotalCentimos = 0;
         foreach ($items as $item) {
-            // Se trabaja en céntimos (enteros) para evitar errores de coma flotante.
-            $precioCentimos = (int) round(((float) $item['precio']) * 100);
-            $centimos += $precioCentimos * (int) $item['cantidad'];
+            $subtotalCentimos += self::importeEnCentimos($item['precio'], (int) $item['cantidad']);
         }
-        return $centimos / 100;
+        return self::aSoles($subtotalCentimos);
+    }
+
+    /** R2 · 5 % si el subtotal es MAYOR a S/ 100,00; si es exactamente 100,00 o menos, 0. */
+    public static function calcularDescuento(float $subtotal): float
+    {
+        return self::aSoles(self::descuentoEnCentimos(self::aCentimos($subtotal)));
+    }
+
+    /** R2 · Total = subtotal − descuento, con 2 decimales. */
+    public static function calcularTotal(float $subtotal): float
+    {
+        $subtotalCentimos = self::aCentimos($subtotal);
+        return self::aSoles($subtotalCentimos - self::descuentoEnCentimos($subtotalCentimos));
     }
 
     /**
@@ -127,21 +129,44 @@ final class ServicioVenta
         ];
     }
 
-    /** R2 · 5 % si el subtotal es MAYOR a S/ 100,00; si es exactamente 100,00 o menos, 0. */
-    public static function calcularDescuento(float $subtotal): float
+    // ─── Auxiliares privados ────────────────────────────────────
+
+    /**
+     * Convierte un valor del formulario en entero, o null si no está escrito como
+     * entero ("2.5", "abc", "", "1e3" → null). Acepta espacios alrededor.
+     */
+    private static function convertirAEntero(mixed $valor): ?int
     {
-        $centimos = (int) round($subtotal * 100);
-        if ($centimos <= (int) round(self::UMBRAL_DESCUENTO * 100)) {
-            return 0.0;
+        if (is_int($valor)) {
+            return $valor;
         }
-        return round($centimos * self::TASA_DESCUENTO) / 100;
+        if (is_string($valor) && preg_match('/^\s*[+-]?\d+\s*$/', $valor) === 1) {
+            $entero = filter_var(trim($valor), FILTER_VALIDATE_INT); // false si desborda int
+            return $entero === false ? null : $entero;
+        }
+        return null;
     }
 
-    /** R2 · Total = subtotal − descuento, con 2 decimales. */
-    public static function calcularTotal(float $subtotal): float
+    private static function importeEnCentimos(float|int|string $precio, int $cantidad): int
     {
-        $centimosSubtotal  = (int) round($subtotal * 100);
-        $centimosDescuento = (int) round(self::calcularDescuento($subtotal) * 100);
-        return ($centimosSubtotal - $centimosDescuento) / 100;
+        return self::aCentimos((float) $precio) * $cantidad;
+    }
+
+    private static function descuentoEnCentimos(int $subtotalCentimos): int
+    {
+        if ($subtotalCentimos <= self::aCentimos(self::UMBRAL_DESCUENTO)) {
+            return 0;
+        }
+        return (int) round($subtotalCentimos * self::TASA_DESCUENTO);
+    }
+
+    private static function aCentimos(float $soles): int
+    {
+        return (int) round($soles * 100);
+    }
+
+    private static function aSoles(int $centimos): float
+    {
+        return $centimos / 100;
     }
 }

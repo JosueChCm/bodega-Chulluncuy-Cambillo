@@ -7,6 +7,7 @@
 3. [Base de datos (sql/bodega.sql)](#3-base-de-datos-sqlbodegasql)
 4. [Aplicación PHP](#4-aplicación-php)
 5. [Lista de cotejo de pruebas manuales](#5-lista-de-cotejo-de-pruebas-manuales)
+6. [Refactorización de ServicioVenta](#6-refactorización-de-servicioventa)
 
 ---
 
@@ -191,17 +192,20 @@ Todas las consultas usan sentencias preparadas y toda la salida pasa por `htmlsp
 
 > **Nota:** en las pruebas 5, 6 y 7, el formulario del navegador frena el dato antes de enviarlo. Para probar que el servidor también aplica R3, quita los atributos `min` y `step` del campo de cantidad con las herramientas de desarrollador (F12) y vuelve a enviar.
 
+---
 
-Revisa src/ServicioVenta.php. Si algún cálculo o validación de las reglas R1–R4
-está fuera de esa clase (en guardar_venta.php o en RepositorioMySQL.php), muévelo
-a ServicioVenta sin cambiar el comportamiento. ServicioVenta no debe tener echo,
-HTML, PDO ni variables de sesión. Al terminar, lista cada método con su firma y la
-regla que implementa, y confirma que la aplicación sigue funcionando igual.
+## 6. Refactorización de ServicioVenta
 
+### Prompt
 
-Pasé a `ServicioVenta` las reglas que estaban en [guardar_venta.php](guardar_venta.php). La aplicación sigue funcionando igual: corrí 14 escenarios en una base de prueba aparte, antes y después del cambio, y la página de resultado, el stock, la tabla `venta` y la tabla `detalle_venta` salieron idénticos.
+> Revisa `src/ServicioVenta.php`. Si algún cálculo o validación de las reglas R1–R4 está fuera de esa clase (en `guardar_venta.php` o en `RepositorioMySQL.php`), muévelo a `ServicioVenta` sin cambiar el comportamiento. `ServicioVenta` no debe tener `echo`, HTML, PDO ni variables de sesión. Al terminar, lista cada método con su firma y la regla que implementa, y confirma que la aplicación sigue funcionando igual.
 
-**Qué moví desde guardar_venta.php:**
+### Respuesta
+
+Pasé a `ServicioVenta` las reglas que estaban en `guardar_venta.php`. La aplicación sigue funcionando igual: corrí 14 escenarios en una base de prueba aparte, antes y después del cambio, y la página de resultado, el stock, la tabla `venta` y la tabla `detalle_venta` salieron idénticos.
+
+#### Qué moví desde `guardar_venta.php`
+
 - La suma de cantidades cuando un producto aparece en varias líneas (R1).
 - La comparación de cada producto con su stock (R1).
 - La revisión de que haya al menos una línea (criterio 2.7).
@@ -211,9 +215,13 @@ Pasé a `ServicioVenta` las reglas que estaban en [guardar_venta.php](guardar_ve
 
 Ahora ese archivo solo lee el formulario, llama a `ServicioVenta`, arma los mensajes y llama al repositorio.
 
-**Qué dejé en RepositorioMySQL.php:** el `UPDATE … SET stock = stock - :cantidad WHERE stock >= :minimo`. No repite la regla R1, que ya se decide antes con `hayStock()`. Es un resguardo de la base de datos, como los `CHECK` del esquema: si otra venta al mismo tiempo se lleva el stock, revierte la transacción. Sacarlo a PHP cambiaría el comportamiento en ese caso. Solo le actualicé el comentario.
+#### Qué dejé en `RepositorioMySQL.php`
 
-**Métodos de ServicioVenta** (todos `public static`):
+Dejé el `UPDATE … SET stock = stock - :cantidad WHERE stock >= :minimo`. No repite la regla R1, que ya se decide antes con `hayStock()`. Es un resguardo de la base de datos, como los `CHECK` del esquema: si otra venta al mismo tiempo se lleva el stock, revierte la transacción. Sacarlo a PHP cambiaría el comportamiento en ese caso. Solo le actualicé el comentario.
+
+#### Métodos de `ServicioVenta`
+
+Todos son `public static`:
 
 | Firma | Regla |
 |---|---|
@@ -232,9 +240,12 @@ Ahora ese archivo solo lee el formulario, llama a `ServicioVenta`, arma los mens
 
 R4 (descontar el stock en la misma transacción) sigue en `RepositorioMySQL::registrarVenta()`, porque la transacción es parte del acceso a datos.
 
-**Revisión de lo prohibido:** `ServicioVenta` no tiene `echo`, HTML, PDO, `$_SESSION` ni `$_POST`. La búsqueda solo encontró textos `array<int, …>` dentro de comentarios.
+#### Revisión de lo prohibido
 
-**Escenarios comparados:**
+`ServicioVenta` no tiene `echo`, HTML, PDO, `$_SESSION` ni `$_POST`. La búsqueda solo encontró textos `array<int, …>` dentro de comentarios.
+
+#### Escenarios comparados
+
 - Las 8 pruebas de la lista de cotejo.
 - El mismo producto en dos líneas cuya suma excede el stock.
 - El mismo producto en dos líneas cuya suma es igual al stock.
@@ -243,4 +254,75 @@ R4 (descontar el stock en la misma transacción) sigue en `RepositorioMySQL::reg
 - Un producto agotado.
 - Un producto que no existe.
 
-Fueron pruebas por consola. No abrí las páginas en el navegador, pero [index.php](index.php) y [venta.php](venta.php) no cambiaron.
+> **Nota:** fueron pruebas por consola. No abrí las páginas en el navegador, pero `index.php` y `venta.php` no cambiaron.
+
+
+Revisa únicamente la sintaxis de tests/ServicioVentaTest.php. No implementes nada
+en src/. No modifiques la aserción ni el valor esperado. Dime si el archivo
+compila y si el nombre del método describe el comportamiento probado
+
+El archivo compila: `php -l tests/ServicioVentaTest.php` dice «No syntax errors detected». No toqué nada. Solo revisé la sintaxis, no corrí PHPUnit.
+
+**Nombres de los métodos:** los 7 describen lo que prueban.
+
+| Método | Qué prueba | ¿El nombre lo describe? |
+|---|---|---|
+| `testDescuentoCeroCuandoSubtotalEsExactamente100` | `calcularDescuento(100.00)` da 0 | Sí (R2, frontera) |
+| `testAplicaDescuentoCuandoSubtotalSupera100` | `calcularDescuento(100.01)` da más de 0 | Sí (R2) |
+| `testAceptaVentaIgualAlStock` | `hayStock(10, 10)` da true | Sí (R1, frontera) |
+| `testRechazaVentaMayorAlStock` | `hayStock(11, 10)` da false | Sí (R1) |
+| `testRechazaCantidadCero` | `validarCantidad(0)` da false | Sí (R3) |
+| `testAceptaCantidadUno` | `validarCantidad(1)` da true | Sí (R3, frontera) |
+| `testRechazaCantidadNegativa` | `validarCantidad(-1)` da false | Sí (R3) |
+
+En los dos tests de R1 el nombre dice «Venta», pero lo que se compara es una cantidad contra el stock. Sería más preciso `testAceptaCantidadIgualAlStock` y `testRechazaCantidadMayorAlStock`. Es opcional.
+
+**Algo para tener en cuenta en `testAplicaDescuentoCuandoSubtotalSupera100`** (no lo cambié):
+- El valor esperado `5.0005` tiene 4 decimales, pero R2 pide el descuento con 2 decimales. El método devuelve `5.00`.
+- Por la tolerancia de 0.01 el test va a pasar igual. Pero también pasaría con cualquier valor entre 4.9905 y 5.0105, así que no comprueba el redondeo a 2 decimales.
+
+**Detalles de formato que no afectan la compilación:**
+- Las líneas 45 y 46 tienen una sangría distinta al resto.
+- Falta una línea en blanco antes de `testRechazaCantidadNegativa` (línea 43).
+- La línea 47 tiene espacios al final.
+
+-------------------------------------------------
+Lee tests/ServicioVentaTest.php. Implementa en src/ServicioVenta.php el código
+MÍNIMO necesario para que ese test pase. No agregues métodos, validaciones ni
+casos que el test no exija. No modifiques el archivo de pruebas. Explica en una
+línea qué cambiaste.
+
+No cambié nada: los 7 tests ya pasan con el `ServicioVenta.php` actual, porque `calcularDescuento`, `hayStock` y `validarCantidad` ya existían de los pasos anteriores.
+
+```
+PHPUnit 11.5.57 · PHP 8.2.12
+.......   7 / 7 (100%)
+OK (7 tests, 7 assertions)
+```
+
+Si querías el ejercicio de TDD en «rojo → verde», no se puede hacer recortando esta clase, porque la usa [guardar_venta.php](guardar_venta.php). Para practicarlo hay que partir de una copia vacía de `ServicioVenta` en otra carpeta.
+----------------------------------------------------------------
+
+Sin cambiar el comportamiento ni los tests, mejora nombres y
+elimina duplicación en ServicioVenta.php.
+
+Ordené `ServicioVenta.php` sin cambiar su comportamiento: los 7 tests siguen pasando y los 14 escenarios de venta dan exactamente la misma salida que antes de todos los cambios. Revisé también a mano casos límite de cantidad y de montos (por ejemplo `"1e3"`, un número que no cabe en un entero, subtotal 0, `0.1 + 0.2`), y los resultados son los esperados.
+
+**Duplicación eliminada:**
+- La conversión `(int) round($x * 100)` se repetía en varios métodos. Ahora está en dos auxiliares privados: `aCentimos()` y `aSoles()`.
+- El descuento en céntimos se calculaba por separado en `calcularDescuento` y en `calcularTotal`, y cada uno volvía a convertir los montos. Ahora los dos usan `descuentoEnCentimos()`.
+- `calcularImporte` armaba un arreglo falso para llamar a `calcularSubtotal`. Ahora los dos usan `importeEnCentimos()`, y el subtotal es la suma de los importes.
+
+**Nombres cambiados:**
+
+| Antes | Ahora | Motivo |
+|---|---|---|
+| `cantidadValida()` | `obtenerCantidadValida()` | Devuelve un entero o null, no un bool; el nombre anterior parecía una pregunta |
+| `itemsSinStock()` | `itemsQueExcedenStock()` | «Sin stock» parecía decir stock 0 |
+| `ventaTieneLineas()` | `tieneLineas()` | Recibe ítems, no una venta |
+| `parsearCantidad()` (público) | `convertirAEntero()` (privado) | Solo se usaba dentro de la clase |
+| `$p`, `$it`, `$agrupado` | `$producto`, `$item`, `$itemsPorProducto` | Más legibles |
+
+Los tres primeros cambios también los apliqué en [guardar_venta.php](guardar_venta.php), que es el único archivo que los usa. No quedan referencias a los nombres viejos.
+
+Los métodos que usan los tests y los de tu especificación original mantienen el nombre: `validarCantidad`, `hayStock`, `calcularSubtotal`, `calcularDescuento` y `calcularTotal`. Además separé la clase en bloques comentados: R3, R1, montos y auxiliares privados.

@@ -58,7 +58,7 @@ try {
         }
 
         // R3 · La cantidad debe ser un entero mayor que cero.
-        $cantidad = ServicioVenta::cantidadValida($cantidadCruda);
+        $cantidad = ServicioVenta::obtenerCantidadValida($cantidadCruda);
         if ($cantidad === null) {
             $errores[] = "Línea {$numLinea} ({$producto['nombre']}): la cantidad es inválida. "
                        . 'Debe ser un número entero mayor que cero (sin decimales).';
@@ -71,12 +71,12 @@ try {
     // R1 · Se suman las líneas del mismo producto y se compara el total contra el stock.
     // El precio de cada ítem viene de la BD, no del formulario.
     $items = ServicioVenta::agruparPorProducto($lineas);
-    foreach (ServicioVenta::itemsSinStock($items) as $it) {
+    foreach (ServicioVenta::itemsQueExcedenStock($items) as $it) {
         $errores[] = "«{$it['nombre']}»: pediste {$it['cantidad']} pero solo hay {$it['stock']} en stock.";
     }
 
     // Criterio 2.7 · Debe haber al menos una línea válida.
-    if ($errores === [] && !ServicioVenta::ventaTieneLineas($items)) {
+    if ($errores === [] && !ServicioVenta::tieneLineas($items)) {
         $errores[] = 'La venta debe contener al menos una línea válida (producto y cantidad).';
     }
 

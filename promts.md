@@ -326,3 +326,34 @@ Ordené `ServicioVenta.php` sin cambiar su comportamiento: los 7 tests siguen pa
 Los tres primeros cambios también los apliqué en [guardar_venta.php](guardar_venta.php), que es el único archivo que los usa. No quedan referencias a los nombres viejos.
 
 Los métodos que usan los tests y los de tu especificación original mantienen el nombre: `validarCantidad`, `hayStock`, `calcularSubtotal`, `calcularDescuento` y `calcularTotal`. Además separé la clase en bloques comentados: R3, R1, montos y auxiliares privados.
+
+Genera en tests/ServicioVentaTest.php una batería de pruebas PHPUnit para la clase ServicioVenta que cubra las reglas R1, R2 y R3 con la técnica de valores límite: para cada regla, el valor justo en el borde, uno por debajo y uno por encima. Mínimo 10 métodos de prueba. Cada método debe tener un nombre que describa el comportamiento en español (testRechazaCantidadCero, testAceptaVentaIgualAlStock...). Usa assertSame para enteros y assertEqualsWithDelta con 0.001 para decimales. No pruebes RepositorioMySQL ni ningún archivo con acceso a base de datos. Al final, lista qué casos NO quedaron cubiertos y por qué.
+
+Reescribí [tests/ServicioVentaTest.php](tests/ServicioVentaTest.php) con 18 pruebas, y las 18 pasan (18 tests, 27 aserciones). Solo prueban `ServicioVenta`, sin base de datos.
+
+**Cambios respecto al archivo anterior:**
+- Se mantienen los 7 tests que había. A dos les cambié el nombre:
+  - `testDescuentoCeroCuandoSubtotalEsExactamente100` → `testSinDescuentoCuandoSubtotalEsExactamente100`
+  - `testAplicaDescuentoCuandoSubtotalSupera100` → `testAplicaDescuentoCuandoSubtotalEs100Con01`
+- El valor esperado para S/ 100,01 pasó de `5.0005` a `5.00`, con tolerancia 0.001, porque R2 pide 2 decimales.
+
+**Valores límite cubiertos:**
+
+| Regla | Borde | Por debajo | Justo en el borde | Por encima |
+|---|---|---|---|---|
+| R3 cantidad | 0 | −1 → rechaza | 0 → rechaza (también `"0"` escrito) | 1 → acepta (también `"1"` escrito, devuelto como entero) |
+| R1 stock = 10 | 10 | 9 → acepta | 10 → acepta (también 6 + 4 del mismo producto) | 11 → rechaza (también 6 + 5) |
+| R2 subtotal | 100,00 | 99,99 → sin descuento | 100,00 → sin descuento (directo y con 40 × 2,50) | 100,01 → descuento 5,00 y total 95,01 (directo y por líneas) |
+
+También agregué tres pruebas extra: cantidad decimal `"1.5"` (R3), stock 0 con cantidad 1 (R1) y el redondeo de 5,005 a 5,01 (R2).
+
+**Casos que NO quedaron cubiertos y por qué:**
+- **R4 (transacción y reversión):** está en `RepositorioMySQL::registrarVenta()`, que usa la base de datos, y pediste no probarlo.
+- **El resguardo `UPDATE … WHERE stock >= :minimo`** (R1 cuando dos ventas ocurren al mismo tiempo): también está en el repositorio.
+- **Que el descuento quede realmente en 2 decimales para S/ 100,01:** con tolerancia 0.001, el test también pasaría si el método devolviera 5,0005 sin redondear. Lo detecta en parte el test de 100,10, porque entre 5,005 y 5,01 la diferencia es mayor a 0.001. Para verificarlo exacto habría que comparar en céntimos o usar `assertSame` con decimales, cosa que me pediste no hacer.
+- **Otras entradas inválidas de R3:** `"abc"`, `""`, `" 4 "`, `"1e3"`, números demasiado grandes, `null` o `2.0` como decimal. Las probé a mano y funcionan, pero no son valores límite.
+- **`agruparPorProducto` con productos distintos y el orden del resultado:** las pruebas solo agrupan un mismo producto.
+- **Stock negativo como entrada de `hayStock`:** no puede ocurrir, porque el esquema tiene `CHECK (stock >= 0)`.
+- **`tieneLineas` (criterio 2.7) y `calcularImporte`:** no son parte de R1–R3; se prueban indirectamente o no se prueban.
+- **Mensajes de error, líneas vacías y el campo cliente:** están en [guardar_venta.php](guardar_venta.php), que es presentación y se conecta a la base de datos.
+- **Registro de productos (requisito 1):** la aplicación todavía no tiene ese método.
